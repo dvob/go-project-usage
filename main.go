@@ -65,14 +65,24 @@ func run() error {
 		return fmt.Errorf("expect one package as argument")
 	}
 
-	packages, err := getPackages(flag.Arg(0))
+	pkgPath := flag.Arg(0)
+
+	packages, err := getPackages(pkgPath)
 	if err != nil {
 		return err
 	}
 
+	if len(packages) >= 20000 {
+		fmt.Fprintln(os.Stderr, "project is imported by more than 20000 packages. we only show results for the first 20000.")
+	}
+
 	githubRepos := getGithubRepos(packages)
 
-	projects, err := getProjects(context.Background(), githubRepos, token)
+	if len(githubRepos) == 0 {
+		return fmt.Errorf("no projects found under https://pkg.go.dev/%s?tab=importedby", pkgPath)
+	}
+
+	projects, err := getAllProjects(context.Background(), githubRepos, token)
 	if err != nil {
 		return err
 	}

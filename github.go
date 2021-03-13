@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -61,6 +63,67 @@ func getRateLimitStats(ctx context.Context, token string) (*rateLimitStats, erro
 		remaining: remaining,
 		resetTime: resetTime,
 	}, nil
+}
+
+func containsProject(ps []project, lookupProject project) bool {
+	for _, p := range ps {
+		if p.Name == lookupProject.Name {
+			return true
+		}
+	}
+	return false
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// getAllProjects splits projectIDs into chunks which Github should be able to handle
+func getAllProjects(ctx context.Context, projectIDs []string, token string) ([]project, error) {
+	// somewhere between 2125 and 2250 is the limit from what Github can handle.
+	// If we try to query more than that Github returns a HTTP 500 error.
+	// To hopefully be safe we reduce the chunk size to 2000.
+	chunkSize := 2000
+
+	errGroup, ctx := errgroup.WithContext(ctx)
+	projects := make(chan project)
+
+	for i := 0; i < len(projectIDs); i += chunkSize {
+		batch := projectIDs[i:min(i+chunkSize, len(projectIDs))]
+		errGroup.Go(func() error {
+			ps, err := getProjects(ctx, batch, token)
+			if err != nil {
+				return err
+			}
+			for _, p := range ps {
+				projects <- p
+			}
+			return nil
+		})
+	}
+
+	go func() {
+		errGroup.Wait()
+		close(projects)
+	}()
+
+	result := []project{}
+	for project := range projects {
+		// different owner/name pairs can point to the same github project due to redirects.
+		// e.g. peterbourgon/gokit -> go-kit/kit
+		if containsProject(result, project) {
+			continue
+		}
+		result = append(result, project)
+	}
+
+	if err := errGroup.Wait(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // getProjects returns a list of projects for all projectIDs in the form OWNER/REPO
@@ -121,23 +184,9 @@ func getProjects(ctx context.Context, projectIDs []string, token string) ([]proj
 			continue
 		}
 
-		// different owner/name pairs can point to the same github project due to redirects.
-		// e.g. peterbourgon/gokit -> go-kit/kit
-		if containsProject(projects, project) {
-			continue
-		}
 		projects = append(projects, project)
 	}
 	return projects, nil
-}
-
-func containsProject(ps []project, lookupProject project) bool {
-	for _, p := range ps {
-		if p.Name == lookupProject.Name {
-			return true
-		}
-	}
-	return false
 }
 
 type Error struct {
