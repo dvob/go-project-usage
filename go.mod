@@ -1,4 +1,4 @@
-module go-project-usage
+module github.com/dvob/go-project-usage
 
 go 1.16
 
