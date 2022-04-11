@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
@@ -67,7 +68,7 @@ func run() error {
 
 	pkgPath := flag.Arg(0)
 
-	packages, err := getPackages(pkgPath)
+	packages, err := getPackagesFromAPI(pkgPath)
 	if err != nil {
 		return err
 	}
@@ -128,6 +129,38 @@ func getGithubRepos(allPackages []string) []string {
 		repos = append(repos, repo)
 	}
 	return repos
+}
+
+func getPackagesFromAPI(packagePath string) ([]string, error) {
+	// See: https://github.com/golang/gddo/wiki/API
+	url := fmt.Sprintf("https://api.godoc.org/importers/%s", packagePath)
+
+	res, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		return nil, fmt.Errorf("status code error: %d %s", res.StatusCode, res.Status)
+	}
+
+	result := struct {
+		Results []struct {
+			Path string `json:"path"`
+		} `json:"results"`
+	}{}
+
+	err = json.NewDecoder(res.Body).Decode(&result)
+	if err != nil {
+		return nil, err
+	}
+
+	projects := []string{}
+	for _, project := range result.Results {
+		projects = append(projects, project.Path)
+	}
+
+	return projects, nil
 }
 
 // getPackages returns all packages wich import this package
