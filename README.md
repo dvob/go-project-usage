@@ -21,10 +21,10 @@ When you create the access token you don't have to select any scopes. The only p
 
 ## How does it work?
 To find the projects and obtain the start count the follwing steps are preformed:
-1. Call https://pkg.go.dev/<PROJECT>?tab=importedby to figure out which projects import the project we are looking.
+1. Call https://api.godoc.org/importers/<PROJECT> to figure out which projects import the project we are looking for.
 2. Call the Github GraphQL API https://api.github.com/graphql to obtain the star and fork count
 
-We use the GraphQL API that we can obtain the star count for many projects with only one API call. If we would use the REST API we would hit the rate limit of Github quite fast.
+We use the GraphQL API that we can obtain the star count for many projects with a single API call. If we would use the REST API we would hit the rate limit of Github quite fast.
 
 ## Github
 ### Links

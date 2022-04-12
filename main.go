@@ -10,8 +10,6 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
-
-	"github.com/PuerkitoBio/goquery"
 )
 
 func main() {
@@ -68,7 +66,7 @@ func run() error {
 
 	pkgPath := flag.Arg(0)
 
-	packages, err := getPackagesFromAPI(pkgPath)
+	packages, err := getPackages(pkgPath)
 	if err != nil {
 		return err
 	}
@@ -131,7 +129,8 @@ func getGithubRepos(allPackages []string) []string {
 	return repos
 }
 
-func getPackagesFromAPI(packagePath string) ([]string, error) {
+// getPackages returns packages wich import this package
+func getPackages(packagePath string) ([]string, error) {
 	// See: https://github.com/golang/gddo/wiki/API
 	url := fmt.Sprintf("https://api.godoc.org/importers/%s", packagePath)
 
@@ -159,37 +158,6 @@ func getPackagesFromAPI(packagePath string) ([]string, error) {
 	for _, project := range result.Results {
 		projects = append(projects, project.Path)
 	}
-
-	return projects, nil
-}
-
-// getPackages returns all packages wich import this package
-func getPackages(packagePath string) ([]string, error) {
-	// Request the HTML page.
-	url := fmt.Sprintf("https://pkg.go.dev/%s?tab=importedby", packagePath)
-
-	res, err := http.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != 200 {
-		return nil, fmt.Errorf("status code error: %d %s", res.StatusCode, res.Status)
-	}
-
-	// Load the HTML document
-	doc, err := goquery.NewDocumentFromReader(res.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	projects := []string{}
-
-	// Find the review items
-	doc.Find(".Details-indent").Each(func(i int, s *goquery.Selection) {
-		// For each item found, get the band and title
-		projects = append(projects, s.Text())
-	})
 
 	return projects, nil
 }
