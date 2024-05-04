@@ -13,15 +13,15 @@ STARS FORKS PROJECT
 26475 2870  https://github.com/minio/minio
 ```
 
-To run `go-project-usage` you have to configure a [personal access token](https://docs.github.com/en/github/authenticating-to-github/creating-a-personal-access-token) to access the Github GrapQL API.
+To run `go-project-usage` you have to configure a [personal access token](https://docs.github.com/en/github/authenticating-to-github/creating-a-personal-access-token) to access the Github GrapQL API (Settings -> Developer settings -> Personal access tokens).
 ```
 export GITHUB_TOKEN=...
 ```
 When you create the access token you don't have to select any scopes. The only purpose of the token is that Github can authenticate your requests to the GraphQL API.
 
 ## How does it work?
-To find the projects and obtain the start count the follwing steps are preformed:
-1. Call https://api.godoc.org/importers/<PROJECT> to figure out which projects import the project we are looking for.
+To find the projects and obtain the star count the follwing steps are preformed:
+1. Call https://pkg.go.dev/%s?tab=importedby to figure out which projects import the project we are looking for.
 2. Call the Github GraphQL API https://api.github.com/graphql to obtain the star and fork count
 
 We use the GraphQL API that we can obtain the star count for many projects with a single API call. If we would use the REST API we would hit the rate limit of Github quite fast.
