@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
@@ -10,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/PuerkitoBio/goquery"
 )
 
 func main() {
@@ -129,10 +130,10 @@ func getGithubRepos(allPackages []string) []string {
 	return repos
 }
 
-// getPackages returns packages wich import this package
+// getPackages returns all packages wich import this package
 func getPackages(packagePath string) ([]string, error) {
-	// See: https://github.com/golang/gddo/wiki/API
-	url := fmt.Sprintf("https://api.godoc.org/importers/%s", packagePath)
+	// Request the HTML page.
+	url := fmt.Sprintf("https://pkg.go.dev/%s?tab=importedby", packagePath)
 
 	res, err := http.Get(url)
 	if err != nil {
@@ -143,21 +144,19 @@ func getPackages(packagePath string) ([]string, error) {
 		return nil, fmt.Errorf("status code error: %d %s", res.StatusCode, res.Status)
 	}
 
-	result := struct {
-		Results []struct {
-			Path string `json:"path"`
-		} `json:"results"`
-	}{}
-
-	err = json.NewDecoder(res.Body).Decode(&result)
+	// Load the HTML document
+	doc, err := goquery.NewDocumentFromReader(res.Body)
 	if err != nil {
 		return nil, err
 	}
 
 	projects := []string{}
-	for _, project := range result.Results {
-		projects = append(projects, project.Path)
-	}
+
+	// Find the review items
+	doc.Find(".ImportedBy-detailsIndent").Each(func(i int, s *goquery.Selection) {
+		// For each item found, get the band and title
+		projects = append(projects, s.Text())
+	})
 
 	return projects, nil
 }
