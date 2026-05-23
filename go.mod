@@ -1,13 +1,10 @@
 module github.com/dvob/go-project-usage
 
-go 1.22
+go 1.23
 
 require (
-	github.com/PuerkitoBio/goquery v1.9.2
-	golang.org/x/sync v0.7.0
+	go.etcd.io/bbolt v1.4.3
+	golang.org/x/sync v0.10.0
 )
 
-require (
-	github.com/andybalholm/cascadia v1.3.2 // indirect
-	golang.org/x/net v0.24.0 // indirect
-)
+require golang.org/x/sys v0.29.0 // indirect

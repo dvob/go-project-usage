@@ -4,13 +4,16 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"net/http"
+	"log"
+	"log/slog"
 	"os"
 	"sort"
-	"strings"
 	"text/tabwriter"
+	"time"
 
-	"github.com/PuerkitoBio/goquery"
+	"github.com/dvob/go-project-usage/internal/cache"
+	"github.com/dvob/go-project-usage/internal/github"
+	"github.com/dvob/go-project-usage/internal/pkgsite"
 )
 
 func main() {
@@ -31,31 +34,77 @@ func usage() {
 
 func run() error {
 	var (
-		token         string
 		showRateLimit bool
+		listCache     bool
+		clientID      = "Iv23lizaK4VTpzTuiX9h"
 	)
 
 	flag.Usage = usage
-	flag.StringVar(&token, "token", "", "Personal Access Token for Github. If not set environment variable GITHUB_TOKEN is used")
 	flag.BoolVar(&showRateLimit, "limit", false, "Show Github rate limit stats and exit. Fetching the stats also costs one point.")
+	flag.BoolVar(&listCache, "list", false, "List all entries in the cache and exit.")
 	flag.Parse()
 
-	if token == "" {
-		token = os.Getenv("GITHUB_TOKEN")
+	if listCache {
+		return listCacheEntries()
 	}
 
-	if token == "" {
-		return fmt.Errorf("Github token not configured. Either set environment variable GITHUB_TOKEN or use flag -token")
-	}
+	// Token source.
+	var tokenFunc github.TokenFunc
+	if envToken := os.Getenv("GITHUB_TOKEN"); envToken != "" {
+		tokenFunc = func(ctx context.Context) (string, error) {
+			return envToken, nil
+		}
+	} else {
+		if clientID == "" {
+			clientID = os.Getenv("GITHUB_CLIENT_ID")
+		}
+		if clientID == "" {
+			return fmt.Errorf("set GITHUB_TOKEN or provide GITHUB_CLIENT_ID for device flow login")
+		}
 
-	if showRateLimit {
-		stats, err := getRateLimitStats(context.Background(), token)
+		tokenCacheFile, err := github.DefaultCacheFile()
 		if err != nil {
 			return err
 		}
-		fmt.Printf("limit: %d\n", stats.limit)
-		fmt.Printf("remaining: %d\n", stats.remaining)
-		fmt.Printf("reset time: %s\n", stats.resetTime)
+		ts := &github.TokenSource{
+			ClientID:  clientID,
+			CacheFile: tokenCacheFile,
+		}
+		tokenFunc = func(ctx context.Context) (string, error) {
+			t, err := ts.Token(ctx)
+			if err != nil {
+				return "", err
+			}
+			return t.AccessToken, nil
+		}
+	}
+
+	// Cache.
+	cacheDir, err := os.UserConfigDir()
+	if err != nil {
+		return err
+	}
+	c, err := cache.NewBoltCache(cacheDir + "/go-project-usage/cache.db")
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	// GitHub client.
+	ghClient := &github.Client{
+		Token:  tokenFunc,
+		Cache:  c,
+		MaxAge: 6 * 30 * 24 * time.Hour,
+	}
+
+	if showRateLimit {
+		stats, err := ghClient.GetRateLimitStats(context.Background())
+		if err != nil {
+			return err
+		}
+		fmt.Printf("limit: %d\n", stats.Limit)
+		fmt.Printf("remaining: %d\n", stats.Remaining)
+		fmt.Printf("reset time: %s\n", stats.ResetTime)
 		return nil
 	}
 
@@ -67,96 +116,68 @@ func run() error {
 
 	pkgPath := flag.Arg(0)
 
-	packages, err := getPackages(pkgPath)
+	// Package source.
+	pkgClient, err := pkgsite.New()
 	if err != nil {
 		return err
 	}
 
-	if len(packages) >= 20000 {
-		fmt.Fprintln(os.Stderr, "project is imported by more than 20000 packages. we only show results for the first 20000.")
+	slog.Info("get packages from pkgsite")
+	packages, err := pkgClient.GetImportedBy(context.Background(), pkgPath)
+	if err != nil {
+		return err
 	}
 
-	githubRepos := getGithubRepos(packages)
+	githubRepos := github.ExtractRepos(packages)
 
 	if len(githubRepos) == 0 {
-		return fmt.Errorf("no projects found under https://pkg.go.dev/%s?tab=importedby", pkgPath)
+		return fmt.Errorf("no projects found for %s", pkgPath)
 	}
+	log.Printf("%d Github repos are using this package", len(githubRepos))
 
-	projects, err := getAllProjects(context.Background(), githubRepos, token)
+	repos, err := ghClient.GetRepoInfos(context.Background(), githubRepos)
 	if err != nil {
 		return err
 	}
 
-	sort.Slice(projects, func(i, j int) bool {
-		return projects[i].StargazerCount < projects[j].StargazerCount
+	sort.Slice(repos, func(i, j int) bool {
+		return repos[i].StargazerCount < repos[j].StargazerCount
 	})
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0)
 	fmt.Fprintln(w, "STARS\tFORKS\tPROJECT")
-	for _, p := range projects {
-		fmt.Fprintf(w, "%d\t%d\t%s\n", p.StargazerCount, p.ForkCount, p.URL)
+	for _, r := range repos {
+		fmt.Fprintf(w, "%d\t%d\t%s\n", r.StargazerCount, r.ForkCount, r.URL)
 	}
 	w.Flush()
 	return nil
 }
 
-func contains(strs []string, lookupStr string) bool {
-	for _, str := range strs {
-		if str == lookupStr {
-			return true
-		}
-	}
-	return false
-}
-
-func getGithubRepos(allPackages []string) []string {
-	// TODO: lookup package location
-	repos := []string{}
-	for _, pkg := range allPackages {
-		parts := strings.Split(pkg, "/")
-		if parts[0] != "github.com" {
-			continue
-		}
-		if len(parts) < 3 {
-			continue
-		}
-
-		repo := strings.ToLower(parts[1] + "/" + parts[2])
-		if contains(repos, repo) {
-			continue
-		}
-		repos = append(repos, repo)
-	}
-	return repos
-}
-
-// getPackages returns all packages wich import this package
-func getPackages(packagePath string) ([]string, error) {
-	// Request the HTML page.
-	url := fmt.Sprintf("https://pkg.go.dev/%s?tab=importedby", packagePath)
-
-	res, err := http.Get(url)
+func listCacheEntries() error {
+	cacheDir, err := os.UserConfigDir()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	defer res.Body.Close()
-	if res.StatusCode != 200 {
-		return nil, fmt.Errorf("status code error: %d %s", res.StatusCode, res.Status)
-	}
-
-	// Load the HTML document
-	doc, err := goquery.NewDocumentFromReader(res.Body)
+	c, err := cache.NewBoltCache(cacheDir + "/go-project-usage/cache.db")
 	if err != nil {
-		return nil, err
+		return err
+	}
+	defer c.Close()
+
+	repos, err := c.List()
+	if err != nil {
+		return err
 	}
 
-	projects := []string{}
-
-	// Find the review items
-	doc.Find(".ImportedBy-detailsIndent").Each(func(i int, s *goquery.Selection) {
-		// For each item found, get the band and title
-		projects = append(projects, s.Text())
+	sort.Slice(repos, func(i, j int) bool {
+		return repos[i].StargazerCount < repos[j].StargazerCount
 	})
 
-	return projects, nil
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0)
+	fmt.Fprintln(w, "STARS\tFORKS\tFETCHED\tPROJECT")
+	for _, r := range repos {
+		fmt.Fprintf(w, "%d\t%d\t%s\t%s\n", r.StargazerCount, r.ForkCount, r.FetchedAt.Format(time.RFC3339), r.Name)
+	}
+	w.Flush()
+	return nil
 }

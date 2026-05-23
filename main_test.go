@@ -3,6 +3,8 @@ package main
 import (
 	"reflect"
 	"testing"
+
+	"github.com/dvob/go-project-usage/internal/github"
 )
 
 func Test_getGithubRepos(t *testing.T) {
@@ -19,7 +21,7 @@ func Test_getGithubRepos(t *testing.T) {
 		"dvob/mod1",
 	}
 
-	githubRepos := getGithubRepos(packages)
+	githubRepos := github.ExtractRepos(packages)
 
 	if !reflect.DeepEqual(expectedOutput, githubRepos) {
 		t.Fatal("got", githubRepos, "expected", expectedOutput)
